@@ -5,7 +5,10 @@ import azure.functions as func  # Azure Functions SDK - required for all Azure F
 import logging                  # Built-in Python library for printing log messages
 import json                     # Built-in Python library for working with JSON data
 import re                       # Built-in Python library for Regular Expressions (pattern matching)
-from datetime import datetime   # Built-in Python library for working with dates and times
+from datetime import datetime, timezone   # Built-in Python library for working with dates and times
+from azure.cosmos import CosmosClient, exceptions, PartitionKey # Azure Cosmos DB SDK - for connecting to our database 
+import os # Built-in python library for getting our env variables
+import uuid # Built-in python library for generating unique identifiers
 
 # =============================================================================
 # CREATE THE FUNCTION APP
@@ -13,6 +16,15 @@ from datetime import datetime   # Built-in Python library for working with dates
 # This creates our Function App with anonymous access (no authentication required)
 # Think of this as the "container" that holds all our functions
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+
+
+# Create Cosmos DB Client - doens't connect here, just stores the client object in memory for use later
+DATABASE_CONNECTION_STRING = os.environ.get("DATABASE_CONNECTION_STRING") # Lazy, no connectoin - using environ.get returns None if missing so it doesn't take dow nthe whole app and therefore every endpoint. Graceful degredation if CosmosDB isn't working or connection string is missing 
+cosmos_client = CosmosClient.from_connection_string(DATABASE_CONNECTION_STRING) # lazy 
+
+database = cosmos_client.get_database_client("TextAnalyzerDB") # lazy 
+container = database.get_container_client("analyses") # lazy 
+
 
 # =============================================================================
 # DEFINE THE TEXT ANALYZER FUNCTION
@@ -37,26 +49,36 @@ def TextAnalyzer(req: func.HttpRequest) -> func.HttpResponse:
     # =========================================================================
     # STEP 1: GET THE TEXT INPUT
     # =========================================================================
-    # First, try to get 'text' from the URL query string
-    # Example URL: /api/TextAnalyzer?text=Hello world
-    # req.params.get('text') would return "Hello world"
-    text = req.params.get('text')
 
-    # If text wasn't in the URL, try to get it from the request body (JSON)
+    # refactor to use helper function
+    text = _extract_text(req) # handles if text is empty in both url and json
+
+    # =========================================================================
+    # STEP 2: HANDLE MISSING TEXT (Error Response) - refactored for Gaurd clause
+    # =========================================================================
     if not text:
-        try:
-            # Try to parse the request body as JSON
-            # Example body: {"text": "Hello world"}
-            req_body = req.get_json()
-            text = req_body.get('text')
-        except ValueError:
-            # If the body isn't valid JSON, just continue (text stays None)
-            pass
+        
+        # If no text was provided, return helpful instructions
+        instructions = {
+            "error": "No text provided",
+            "howToUse": {
+                "option1": "Add ?text=YourText to the URL",
+                "option2": "Send a POST request with JSON body: {\"text\": \"Your text here\"}",
+                "example": "https://your-function-url/api/TextAnalyzer?text=Hello world"
+            }
+        }
 
+        # Return an error response
+        # status_code=400 means "Bad Request - client made an error"
+        return func.HttpResponse(
+            json.dumps(instructions, indent=2),
+            mimetype="application/json",
+            status_code=400
+        )
     # =========================================================================
-    # STEP 2: ANALYZE THE TEXT (if text was provided)
+    # STEP 3: ANALYZE THE TEXT (if text was provided)
     # =========================================================================
-    if text:
+    else:
         # ----- Word Analysis -----
         # split() breaks the text into a list of words
         # "Hello world" becomes ["Hello", "world"]
@@ -107,11 +129,12 @@ def TextAnalyzer(req: func.HttpRequest) -> func.HttpResponse:
         longest_word = max(words, key=len) if words else ""
 
         # =====================================================================
-        # STEP 3: BUILD THE RESPONSE
+        # STEP 4: BUILD THE RESPONSE
         # =====================================================================
         # Create a Python dictionary with all our analysis results
         # This will be converted to JSON format
         response_data = {
+            "id": str(uuid.uuid4()), #the unique ID used for this analysis also used as the partition id for Cosmos DB partition storing
             "analysis": {
                 "wordCount": word_count,
                 "characterCount": char_count,
@@ -123,17 +146,35 @@ def TextAnalyzer(req: func.HttpRequest) -> func.HttpResponse:
                 "readingTimeMinutes": reading_time_minutes
             },
             "metadata": {
-                # datetime.utcnow() gets current time, isoformat() converts to string
+                # datetime.now() gets current time, isoformat() converts to string
                 # Example: "2024-01-15T14:30:00.000000"
-                "analyzedAt": datetime.utcnow().isoformat(),
+                "analyzedAt": datetime.now(timezone.utc).isoformat(),
 
                 # Show first 100 characters of text as a preview
                 # The syntax: value_if_true if condition else value_if_false
                 # This is called a "ternary operator" or "conditional expression"
                 "textPreview": text[:100] + "..." if len(text) > 100 else text
-            }
+            },
+            "originalText": text
         }
 
+        # =====================================================================
+        # STEP 5: CREATE AN ITEM IN COSMOS DB
+        # =====================================================================
+        # Creating an item vs replacing as these records will always be new analyses, not updates to old ones 
+        try:
+            container.create_item(response_data)
+        except exceptions.CosmosHttpResponseError as e:
+            logging.error(f"Error saving to Cosmos DB: {e.message}")
+            return func.HttpResponse("Database error", status_code=500)
+        
+        # =====================================================================
+        # STEP 6: STORE ANALYSIS IN COSMOS DB
+        # =====================================================================
+
+        # =====================================================================
+        # STEP 7: CREATE RESPONSE & RETURN
+        # =====================================================================
         # Return a successful HTTP response
         # json.dumps() converts Python dictionary to JSON string
         # indent=2 makes the JSON nicely formatted (2 spaces per indent level)
@@ -145,24 +186,33 @@ def TextAnalyzer(req: func.HttpRequest) -> func.HttpResponse:
             status_code=200
         )
 
-    # =========================================================================
-    # STEP 4: HANDLE MISSING TEXT (Error Response)
-    # =========================================================================
-    else:
-        # If no text was provided, return helpful instructions
-        instructions = {
-            "error": "No text provided",
-            "howToUse": {
-                "option1": "Add ?text=YourText to the URL",
-                "option2": "Send a POST request with JSON body: {\"text\": \"Your text here\"}",
-                "example": "https://your-function-url/api/TextAnalyzer?text=Hello world"
-            }
-        }
+# helper funciton to handle if text is empty in both url and json
+def _extract_text(req:func.HttpRequest) -> str | None:
+    # First, try to get 'text' from the URL query string
+    # Example URL: /api/TextAnalyzer?text=Hello world
+    # req.params.get('text') would return "Hello world"
+    text = req.params.get('text') 
 
-        # Return an error response
-        # status_code=400 means "Bad Request - client made an error"
-        return func.HttpResponse(
-            json.dumps(instructions, indent=2),
-            mimetype="application/json",
-            status_code=400
-        )
+    # If text wasn't in the URL, try to get it from the request body (JSON)
+    if text is None: 
+        try:
+            body = req.get_json()
+        except ValueError:
+            logging.warning("Request body is not valid JSON")
+            return None
+        # return Json body if body.get("text") exists and body is a dict, otherwise return None
+        return body.get("text") if isinstance(body, dict) else None
+    else: # return the URL value if text exists
+        return text
+
+# Retrieve the history of analysis
+@app.route(route="GetAnalysisHistory")
+def GetAnalysisHistory(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    This function retrieves the history of text analyses from Cosmos DB.
+
+    Parameters:
+        req: The incoming HTTP request (not used in this function)
+    Returns:
+        func.HttpResponse: JSON response with list of past analyses
+    """

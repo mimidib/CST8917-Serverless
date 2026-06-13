@@ -6,7 +6,7 @@ import logging                  # Built-in Python library for printing log messa
 import json                     # Built-in Python library for working with JSON data
 import re                       # Built-in Python library for Regular Expressions (pattern matching)
 from datetime import datetime, timezone   # Built-in Python library for working with dates and times
-from azure.cosmos import CosmosClient, exceptions, PartitionKey # Azure Cosmos DB SDK - for connecting to our database 
+from azure.cosmos import CosmosClient, exceptions # Azure Cosmos DB SDK - for connecting to our database 
 import os # Built-in python library for getting our env variables
 import uuid # Built-in python library for generating unique identifiers
 
@@ -216,3 +216,30 @@ def GetAnalysisHistory(req: func.HttpRequest) -> func.HttpResponse:
     Returns:
         func.HttpResponse: JSON response with list of past analyses
     """
+    logging.info('Get Analysis History API was called!')
+
+    # set limit of return rows
+    limit = int(req.params.get("limit", 10)) # default 10
+
+    # try to retrieve stored analysis records
+    try:
+        # rather than retrieving all records and sorting on the server utilize cosmosdb queries to sort and return to us a ready list
+        query="SELECT * FROM c ORDER BY c.metadata.analyzedAt DESC OFFSET 0 LIMIT @limit"
+        parameters = [{"name": "@limit", "value": limit}]
+        items = list(container.query_items(query=query, parameters=parameters, enable_cross_partition_query=True))
+
+    except exceptions.CosmosHttpResponseError as e:
+        logging.error(f"Error querying Cosmos DB: {e.message}")
+        return func.HttpResponse("Database error", status_code=500)
+    
+    # returns records as JSON array
+    return func.HttpResponse(
+        json.dumps(
+            {
+            "count": len(items), 
+            "results": items 
+        }, 
+        indent=2),
+        mimetype="application/json",
+        status_code=200
+    )

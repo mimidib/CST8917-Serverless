@@ -1,8 +1,8 @@
 # CST8917 Lab 1 — Text Analyzer Azure Function
 
 **Course:** CST8917 - Serverless Applications | Summer 2026
-**Student:** <your name>
-**Student #:** <your number>
+**Student:** Mimi Dib
+**Student #:** 040829779
 
 A Python (v2 model) Azure Function that analyzes text and persists each
 result to an Azure database, plus a history endpoint to retrieve past results.

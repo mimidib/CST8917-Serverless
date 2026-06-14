@@ -168,3 +168,14 @@ Remember to add `<DB_CONNECTION_STRING_VAR>` (and any other env vars) under
 ```
 
 ---
+
+## Challenges & Lessons Learned
+
+- **Azure Functions Core Tools wouldn't install via npm** — the npm package downloaded but never extracted `func.exe` (incompatible with Node 26). Fixed by installing the standalone build with `winget` instead, which ships the binary pre-extracted.
+- **"No HTTP triggers found" on Azure** — the Python v2 model discovers functions by running the code (decorators), not from `function.json`. Deploying via the CLI didn't enable this, so I had to add the app setting `AzureWebJobsFeatureFlags = EnableWorkerIndexing` to the Azure function App Environment variables.
+- **Cross-partition query error on `GetAnalysisHistory`** — because the partition key is `/id`, listing all history spans every partition. This raised `(BadRequest) Cross partition query is required but disabled. Please set x-ms-documentdb-query-enablecrosspartition to true...` in the logs. Fixed by passing `enable_cross_partition_query=True` to be able to call `query_items` when creating the items list.
+- **Deployed app crashed at import** — `local.settings.json` is never deployed (as expected), so `DATABASE_CONNECTION_STRING` environment variable was missing in Azure since I hadn't added it yet so when Python loaded the file in Azure, the line that creates the with module-level `CosmosClient` threw on import. I thought what would've happened was the app would deploy but the request wouldn't execute,(possibly since I came from the compiled world of Java as my mother-tongue coding language, the compile would work but the run would fail in this instance since a null at runtime isn't a compile error) instead the import crash made trigger indexing find zero functions — the deploy logged "No HTTP triggers found" and **none** of the functions registered at all (not even `TextAnalyzer`). Fixed by adding the connection string as an **App Setting** in the Function App (same name as locally).
+
+**Key takeaway:** module-level code runs at import, so any error there (a missing env var, a failed import) breaks trigger indexing for _every_ function — surfacing as "No functions / triggers found" rather than an obvious error.
+
+---

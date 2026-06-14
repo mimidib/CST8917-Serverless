@@ -35,7 +35,7 @@ flowchart LR
 
 ## Demo Video
 
-📹 See [DEMO Video](youtube.com/) for the YouTube link.
+📹 See [DEMO Video](https://youtu.be/SFqkzbxt4A4) for the YouTube link.
 
 ---
 

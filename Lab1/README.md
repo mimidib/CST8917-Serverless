@@ -65,6 +65,9 @@ justification, alternatives considered, and cost notes.
 # Analyze text
 curl "http://localhost:7071/api/TextAnalyzer?text=Serverless computing is amazing. It scales automatically."
 
+# Retrieve history (all)
+curl "http://localhost:7071/api/GetAnalysisHistory"
+
 # Retrieve history (last 5)
 curl "http://localhost:7071/api/GetAnalysisHistory?limit=5"
 ```
@@ -85,13 +88,13 @@ curl "http://localhost:7071/api/GetAnalysisHistory?limit=5"
 These go in `local.settings.json` for local dev (gitignored — **never commit
 secrets**) and in the Function App's **Application Settings** in Azure.
 
-| Variable                     | Description                                  |
-| ---------------------------- | -------------------------------------------- |
-| `FUNCTIONS_WORKER_RUNTIME`   | `python`                                     |
-| `AzureWebJobsStorage`        | `UseDevelopmentStorage=true` (local/Azurite) |
-| `<DB_CONNECTION_STRING_VAR>` | Connection string/endpoint for the database  |
-| `<DB_DATABASE_NAME>`         | <if applicable>                              |
-| `<DB_CONTAINER_NAME>`        | <if applicable>                              |
+| Variable                     | Description                                    |
+| ---------------------------- | ---------------------------------------------- |
+| `FUNCTIONS_WORKER_RUNTIME`   | `python`                                       |
+| `AzureWebJobsStorage`        | `UseDevelopmentStorage=true` (local/Azurite)   |
+| `<DB_CONNECTION_STRING_VAR>` | Connection string/endpoint for the database    |
+| `<DB_DATABASE_NAME>`         | <if applicable e.g. Cosmos DB: `TextAnalyzer`> |
+| `<DB_CONTAINER_NAME>`        | <if applicable e.g. `analyses`>                |
 
 Example `local.settings.json`:
 
@@ -105,6 +108,16 @@ Example `local.settings.json`:
   }
 }
 ```
+
+What each line does:
+
+- **`IsEncrypted`** — plain-text local storage
+- **`Values`** — the block loaded as env vars (read via `os.environ`)
+- **`FUNCTIONS_WORKER_RUNTIME`** — the language runtime
+- **`AzureWebJobsStorage`** — runtime's internal storage → Azurite locally
+- **`DATABASE_CONNECTION_STRING`** — Cosmos connection (flagged as secret, never commit)
+
+> Gitignored and not deployed — Azure reads the same names from the Function App's Application Settings.
 
 ---
 
@@ -155,11 +168,3 @@ Remember to add `<DB_CONNECTION_STRING_VAR>` (and any other env vars) under
 ```
 
 ---
-
-## Submission Checklist
-
-- [ ] `function_app.py` with **both** `TextAnalyzer` and `GetAnalysisHistory`
-- [ ] `requirements.txt` updated with the database SDK
-- [ ] `DATABASE_CHOICE.md` (choice, justification, alternatives, cost)
-- [ ] `README.md` (this file — run instructions + env vars + YouTube link (≤ 5 min))
-- [ ] `local.settings.json` is gitignored (no secrets committed)

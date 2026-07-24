@@ -1,0 +1,14 @@
+# Secrets — never commit real settings/keys (the .example template IS committed)
+local.settings.json
+
+# Python virtual environment
+.venv/
+FleetBookFunctionApp/.venv/
+
+# Azure Functions local state
+__azurite_db*.json
+.azurite/
+
+# Python cache
+__pycache__/
+*.pyc
